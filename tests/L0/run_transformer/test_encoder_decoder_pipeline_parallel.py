@@ -7,7 +7,7 @@ specifically focusing on:
 3. Gradient flow across the encoder-decoder boundary
 """
 import unittest
-from typing import Optional, Tuple, List, Dict, Callable
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -16,11 +16,7 @@ from torch.testing._internal import common_utils
 from apex.transformer import parallel_state
 from apex.transformer.enums import ModelType
 from apex.transformer.pipeline_parallel import utils as pp_utils
-from apex.transformer.pipeline_parallel.schedules.common import (
-    build_model,
-    forward_step,
-    backward_step,
-)
+from apex.transformer.pipeline_parallel.schedules.common import build_model
 from apex.transformer.pipeline_parallel.schedules.fwd_bwd_pipelining_without_interleaving import (
     forward_backward_pipelining_without_interleaving,
 )
@@ -162,7 +158,11 @@ class TestEncoderDecoderSplitRank(NcclDistributedTestBase):
             parallel_state.destroy_model_parallel()
 
     def test_split_rank_pre_post_process(self) -> None:
-        """Test that pre_process and post_process are set correctly for encoder-decoder models."""
+        """Test that pre_process and post_process are set correctly for encoder-decoder models.
+
+        This test verifies that build_model correctly sets pre_process and post_process
+        flags based on the pipeline rank and split_rank for encoder-decoder models.
+        """
         pipeline_model_parallel_world_size = 4
         split_rank = 2
 
@@ -181,21 +181,30 @@ class TestEncoderDecoderSplitRank(NcclDistributedTestBase):
             rank = parallel_state.get_pipeline_model_parallel_rank()
             world_size = parallel_state.get_pipeline_model_parallel_world_size()
 
+            model = build_model(
+                encoder_decoder_model_provider,
+                wrap_with_ddp=False,
+                model_type=ModelType.encoder_and_decoder,
+                hidden_size=64,
+            )
+
             expected_pre_process = rank == 0 or rank == split_rank
             expected_post_process = rank == (split_rank - 1) or rank == (world_size - 1)
 
-            actual_pre_process = rank == 0 or rank == split_rank
-            actual_post_process = rank == (split_rank - 1) or rank == (world_size - 1)
+            self.assertEqual(len(model), 1, "Expected single model in list")
+            actual_model = model[0]
 
             self.assertEqual(
-                actual_pre_process,
+                actual_model.pre_process,
                 expected_pre_process,
-                f"pre_process mismatch at rank {rank}",
+                f"pre_process mismatch at rank {rank}: expected {expected_pre_process}, "
+                f"got {actual_model.pre_process}",
             )
             self.assertEqual(
-                actual_post_process,
+                actual_model.post_process,
                 expected_post_process,
-                f"post_process mismatch at rank {rank}",
+                f"post_process mismatch at rank {rank}: expected {expected_post_process}, "
+                f"got {actual_model.post_process}",
             )
         finally:
             parallel_state.destroy_model_parallel()
